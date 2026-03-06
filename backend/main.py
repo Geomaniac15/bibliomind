@@ -26,10 +26,24 @@ def search_openlibrary(query):
     url = 'https://openlibrary.org/search.json'
     params = {'title': query}
 
-    response = requests.get(url, params=params)
-    data = response.json()
+    try:
+        response = requests.get(url, params=params, timeout=5)
 
-    if data['docs']:
+        if response.status_code != 200:
+            print('OpenLibrary error:', response.status_code)
+            return None
+
+        data = response.json()
+
+    except requests.exceptions.RequestException as e:
+        print('Network error:', e)
+        return None
+
+    except ValueError:
+        print('Invalid JSON returned from API')
+        return None
+
+    if data.get('docs'):
         book = data['docs'][0]
 
         return {
@@ -37,7 +51,7 @@ def search_openlibrary(query):
             'author': book.get('author_name', ['Unknown'])[0],
             'year': book.get('first_publish_year')
         }
-    
+
     return None
 
 app = FastAPI()
@@ -57,9 +71,23 @@ async def scan_books(file: UploadFile):
 
     query_words = cleaned_text.split()
 
-    query = ' '.join(query_words[:3])
+    queries = [
+        ' '.join(query_words[:5]),
+        ' '.join(query_words[:4]),
+        ' '.join(query_words[:3]),
+        ' '.join(query_words[:2])
+    ]
 
-    book = search_openlibrary(query)
+    book = None
+
+    for q in queries:
+        book = search_openlibrary(q)
+        if book:
+            query = q
+            break
+
+    if not book:
+        query = queries[0]
 
     return {
         'ocr_text': text,
