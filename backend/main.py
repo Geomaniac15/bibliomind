@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import os 
 
-os.environ['TESSDATA_PREFIX'] = r"C:\Program Files\Tesseract-OCR\tessdate"
+os.environ['TESSDATA_PREFIX'] = r"C:\Program Files\Tesseract-OCR\tessdata"
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
