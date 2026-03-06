@@ -5,6 +5,7 @@ import numpy as np
 import os 
 import requests 
 import re
+from rapidfuzz import fuzz
 
 os.environ['TESSDATA_PREFIX'] = r'C:\Program Files\Tesseract-OCR\tessdata'
 
@@ -22,34 +23,38 @@ def clean_ocr_text(text):
 
     return cleaned
 
+def extract_keywords(text):
+    words = text.split()
+
+    # keep longer uppercase tokens
+    keywords = [w for w in words if len(w) > 4]
+
+    return ' '.join(keywords[:3])
+
 def search_openlibrary(query):
     url = 'https://openlibrary.org/search.json'
-    params = {'title': query}
+    params = {'q': query}
 
-    try:
-        response = requests.get(url, params=params, timeout=5)
+    response = requests.get(url, params=params)
+    data = response.json()
 
-        if response.status_code != 200:
-            print('OpenLibrary error:', response.status_code)
-            return None
+    best_match = None
+    best_score = 0
 
-        data = response.json()
+    for doc in data.get('docs', [])[:10]:  # check first few results
+        title = doc.get('title', '')
 
-    except requests.exceptions.RequestException as e:
-        print('Network error:', e)
-        return None
+        score = fuzz.partial_ratio(query.lower(), title.lower())
 
-    except ValueError:
-        print('Invalid JSON returned from API')
-        return None
+        if score > best_score:
+            best_score = score
+            best_match = doc
 
-    if data.get('docs'):
-        book = data['docs'][0]
-
+    if best_match and best_score > 60:  # threshold
         return {
-            'title': book.get('title'),
-            'author': book.get('author_name', ['Unknown'])[0],
-            'year': book.get('first_publish_year')
+            'title': best_match.get('title'),
+            'author': best_match.get('author_name', ['Unknown'])[0],
+            'year': best_match.get('first_publish_year')
         }
 
     return None
@@ -65,29 +70,26 @@ async def scan_books(file: UploadFile):
         cv2.IMREAD_COLOR
     )
 
-    text = pytesseract.image_to_string(image, lang='eng')
+    grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # increase constrast
+    grey = cv2.GaussianBlur(grey, (3,3), 0)
+
+    # threshold makes text stand out
+    thresh = cv2.adaptiveThreshold(
+        grey, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        11, 2
+    )
+
+    text = pytesseract.image_to_string(thresh, lang='eng', config='--psm 6')
 
     cleaned_text = clean_ocr_text(text)
 
-    query_words = cleaned_text.split()
+    query = extract_keywords(cleaned_text)
 
-    queries = [
-        ' '.join(query_words[:5]),
-        ' '.join(query_words[:4]),
-        ' '.join(query_words[:3]),
-        ' '.join(query_words[:2])
-    ]
-
-    book = None
-
-    for q in queries:
-        book = search_openlibrary(q)
-        if book:
-            query = q
-            break
-
-    if not book:
-        query = queries[0]
+    book = search_openlibrary(query)
 
     return {
         'ocr_text': text,
