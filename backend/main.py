@@ -80,23 +80,28 @@ async def scan_books(file: UploadFile):
 
     h, w = image.shape[:2]
 
-    # crop middle region
-    image = image[int(h*0.45):int(h*0.9), int(w*0.1):int(w*0.9)]
+    image = image[int(h*0.35):int(h*0.9), int(w*0.1):int(w*0.9)]
 
-    # use red channel
-    b, g, r = cv2.split(image)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    equalized = clahe.apply(gray)
 
-    # otsu threshold
-    blur = cv2.GaussianBlur(r, (5,5), 0)
-    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    thresh = cv2.adaptiveThreshold(
+        equalized, 
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        91, 
+        4)
 
-    cv2.imwrite('debug.png', thresh)
+    clean = cv2.medianBlur(thresh, 3)
 
-    text = pytesseract.image_to_string(thresh, 
+    cv2.imwrite('debug.png', clean)
+
+    text = pytesseract.image_to_string(clean, 
                                        lang='eng', 
-                                       config='--psm 6')
+                                       config='--psm 11')
 
-    
     print('OCR Raw:', text)
 
     cleaned_text = clean_ocr_text(text)
