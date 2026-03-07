@@ -1,34 +1,31 @@
 from fastapi import FastAPI, UploadFile
-import pytesseract
 import cv2
 import numpy as np
-import os 
 import requests 
 import re
 from rapidfuzz import fuzz
+import easyocr
 
-os.environ['TESSDATA_PREFIX'] = r'C:\Program Files\Tesseract-OCR\tessdata'
-
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+print('loading EasyOCR model...')
+reader = easyocr.Reader(['en'])
+print('model loaded')
 
 def clean_ocr_text(text):
-    lines = text.split('\n')
-
-    lines = [line.strip() for line in lines if line.strip() != '']
-
-    cleaned = ' '.join(lines)
-
     # remove numbers and weird characters
-    cleaned = re.sub(r'[^A-Za-z\s]', '', cleaned)
-
-    return cleaned
+    cleaned = re.sub(r'[^A-Za-z\s]', '', text)
+    lines = cleaned.split('\n')
+    lines = [line.strip() for line in lines if line.strip() != '']
+    return ' '.join(lines)
 
 def extract_keywords(text):
-    words = text.split()
-
-    # keep longer uppercase tokens
-    keywords = [w for w in words if len(w) > 2]
-
+    words = text.upper().split()
+    
+    # filter out common publisher hype words
+    ignore_words = {'SUNDAY', 'TIMES', 'BESTSELLER', 'NEW', 'YORK', 'AUTHOR', 'NUMBER'}
+    
+    # keep words longer than 2 characters that aren't in the ignore list
+    keywords = [w for w in words if len(w) > 2 and w not in ignore_words]
+    
     return ' '.join(keywords[:5])
 
 def search_openlibrary(query):
@@ -43,7 +40,6 @@ def search_openlibrary(query):
 
     for doc in data.get('docs', [])[:10]:  # check first few results
         title = doc.get('title', '')
-
         score = fuzz.partial_ratio(query.lower(), title.lower())
 
         if score > best_score:
@@ -51,7 +47,6 @@ def search_openlibrary(query):
             best_match = doc
 
     cover_url = None
-
     if best_match:
         cover_id = best_match.get('cover_i')
         if cover_id:
@@ -80,34 +75,17 @@ async def scan_books(file: UploadFile):
 
     h, w = image.shape[:2]
 
-    image = image[int(h*0.35):int(h*0.9), int(w*0.1):int(w*0.9)]
+    # crop
+    cropped_image = image[int(h*0.50):int(h*0.9), int(w*0.1):int(w*0.9)]
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    equalized = clahe.apply(gray)
-
-    thresh = cv2.adaptiveThreshold(
-        equalized, 
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        91, 
-        4)
-
-    clean = cv2.medianBlur(thresh, 3)
-
-    cv2.imwrite('debug.png', clean)
-
-    text = pytesseract.image_to_string(clean, 
-                                       lang='eng', 
-                                       config='--psm 11')
-
+    results = reader.readtext(cropped_image, detail=0)
+    
+    # join the list into a single string
+    text = ' '.join(results)
     print('OCR Raw:', text)
 
     cleaned_text = clean_ocr_text(text)
-
     query = extract_keywords(cleaned_text)
-
     print('Search Query:', query)
 
     book = search_openlibrary(query)
