@@ -27,9 +27,9 @@ def extract_keywords(text):
     words = text.split()
 
     # keep longer uppercase tokens
-    keywords = [w for w in words if len(w) > 4]
+    keywords = [w for w in words if len(w) > 2]
 
-    return ' '.join(keywords[:3])
+    return ' '.join(keywords[:5])
 
 def search_openlibrary(query):
     url = 'https://openlibrary.org/search.json'
@@ -49,14 +49,15 @@ def search_openlibrary(query):
         if score > best_score:
             best_score = score
             best_match = doc
-    
-    cover_id = best_match.get('cover_i')
 
     cover_url = None
-    if cover_id:
-        cover_url = f'https://covers.openlibrary.org/b/id/{cover_id}-L.jpg'
 
-    if best_match and best_score > 60:  # threshold
+    if best_match:
+        cover_id = best_match.get('cover_i')
+        if cover_id:
+            cover_url = f'https://covers.openlibrary.org/b/id/{cover_id}-L.jpg'
+
+    if best_match and best_score > 50:  # threshold
         return {
             'title': best_match.get('title'),
             'author': best_match.get('author_name', ['Unknown'])[0],
@@ -80,25 +81,29 @@ async def scan_books(file: UploadFile):
     h, w = image.shape[:2]
 
     # crop middle region
-    image = image[int(h*0.25):int(h*0.75), int(w*0.1):int(w*0.9)]
+    image = image[int(h*0.45):int(h*0.9), int(w*0.1):int(w*0.9)]
 
-    grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # use red channel
+    b, g, r = cv2.split(image)
 
-    # increase constrast
-    grey = cv2.convertScaleAbs(grey, alpha=1.5, beta=0)
+    # otsu threshold
+    blur = cv2.GaussianBlur(r, (5,5), 0)
+    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # threshold makes text stand out
-    _, thresh = cv2.threshold(grey, 150, 255, cv2. THRESH_BINARY)
+    cv2.imwrite('debug.png', thresh)
 
     text = pytesseract.image_to_string(thresh, 
                                        lang='eng', 
                                        config='--psm 6')
+
     
     print('OCR Raw:', text)
 
     cleaned_text = clean_ocr_text(text)
 
     query = extract_keywords(cleaned_text)
+
+    print('Search Query:', query)
 
     book = search_openlibrary(query)
 
