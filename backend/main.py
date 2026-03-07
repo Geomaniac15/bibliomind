@@ -49,12 +49,19 @@ def search_openlibrary(query):
         if score > best_score:
             best_score = score
             best_match = doc
+    
+    cover_id = best_match.get('cover_i')
+
+    cover_url = None
+    if cover_id:
+        cover_url = f'https://covers.openlibrary.org/b/id/{cover_id}-L.jpg'
 
     if best_match and best_score > 60:  # threshold
         return {
             'title': best_match.get('title'),
             'author': best_match.get('author_name', ['Unknown'])[0],
-            'year': best_match.get('first_publish_year')
+            'year': best_match.get('first_publish_year'),
+            'cover': cover_url
         }
 
     return None
@@ -70,20 +77,24 @@ async def scan_books(file: UploadFile):
         cv2.IMREAD_COLOR
     )
 
+    h, w = image.shape[:2]
+
+    # crop middle region
+    image = image[int(h*0.25):int(h*0.75), int(w*0.1):int(w*0.9)]
+
     grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
     # increase constrast
-    grey = cv2.GaussianBlur(grey, (3,3), 0)
+    grey = cv2.convertScaleAbs(grey, alpha=1.5, beta=0)
 
     # threshold makes text stand out
-    thresh = cv2.adaptiveThreshold(
-        grey, 255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        11, 2
-    )
+    _, thresh = cv2.threshold(grey, 150, 255, cv2. THRESH_BINARY)
 
-    text = pytesseract.image_to_string(thresh, lang='eng', config='--psm 6')
+    text = pytesseract.image_to_string(thresh, 
+                                       lang='eng', 
+                                       config='--psm 6')
+    
+    print('OCR Raw:', text)
 
     cleaned_text = clean_ocr_text(text)
 
