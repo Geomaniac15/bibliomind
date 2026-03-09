@@ -68,9 +68,9 @@ def split_title_author(fixed_text):
 
 def search_openlibrary(title_query, author_query=None):
     url = 'https://openlibrary.org/search.json'
-    params = {'title': title_query}
+    params = {'title': title_query.lower()}
     if author_query:
-        params['author'] = author_query
+        params['author'] = author_query.lower()
 
     response = requests.get(url, params=params)
     data = response.json()
@@ -170,11 +170,13 @@ async def scan_books(file: UploadFile):
     text = ' '.join(large_text_blocks)
     print('Filtered OCR Text:', text)
 
-    cleaned_text = clean_ocr_text(text)
-    fixed_text = fix_ocr_errors(cleaned_text)   # char-level fixes, no spell checker
-    title_q, author_q = split_title_author(fixed_text)
+    fixed_text = fix_ocr_errors(text)   # char-level fixes, no spell checker
+    cleaned_text = clean_ocr_text(fixed_text)
+    query_text = cleaned_text
+    title_q, author_q = split_title_author(cleaned_text)
     
-    query = extract_keywords(title_q)
+    # query = extract_keywords(query_text)
+    query = title_q
     print('Search Query:', query)
 
     book = search_openlibrary(query, author_q)
