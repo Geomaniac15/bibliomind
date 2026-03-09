@@ -75,30 +75,34 @@ def search_openlibrary(title_query, author_query=None):
     response = requests.get(url, params=params)
     data = response.json()
 
-    best_match = None
-    best_score = 0
-
+    print('openlib returned')
     for doc in data.get('docs', [])[:10]:
         title = doc.get('title', '')
         score = fuzz.token_sort_ratio(title_query.lower(), title.lower())
+        print(f'  score={score} title="{title}"')
+
+    best_match = None
+    best_score = 0
+    
+    for doc in data.get('docs', [])[:10]:
+        title = doc.get('title', '')
+        score = fuzz.token_sort_ratio(title_query.lower(), title.lower())
+        print(f'score={score} title="{title}"')
 
         if score > best_score:
             best_score = score
             best_match = doc
 
-    # if no good match, retry with just the longest clean word
-    if (not best_match or best_score <= 50) and title_query:
-        longest = sorted(title_query.split(), key=len, reverse=True)[0]
-        if longest != title_query:
-            params = {'q': longest}
-            response = requests.get(url, params=params)
-            data = response.json()
-            for doc in data.get('docs', [])[:10]:
-                title = doc.get('title', '')
-                score = fuzz.token_sort_ratio(longest.lower(), title.lower())
-                if score > best_score:
-                    best_score = score
-                    best_match = doc
+    # if still nothing, try a broad q= search as fallback
+    if not best_match or best_score <= 50:
+        response = requests.get(url, params={'q': title_query.lower()})
+        data = response.json()
+        for doc in data.get('docs', [])[:10]:
+            title = doc.get('title', '')
+            score = fuzz.token_sort_ratio(title_query.lower(), title.lower())
+            if score > best_score:
+                best_score = score
+                best_match = doc
 
     cover_url = None
     if best_match:
