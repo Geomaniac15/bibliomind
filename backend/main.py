@@ -5,10 +5,21 @@ import requests
 import re
 from rapidfuzz import fuzz
 import easyocr
+from spellchecker import SpellChecker
+
+spell = SpellChecker()
 
 print('loading EasyOCR model...')
 reader = easyocr.Reader(['en'])
 print('model loaded')
+
+def correct_ocr_text(text):
+    words = text.split()
+    corrected = []
+    for word in words:
+        correction = spell.correction(word)
+        corrected.append(correction if correction else word)
+    return ' '.join(corrected)
 
 def clean_ocr_text(text):
     # remove numbers and weird characters
@@ -62,6 +73,36 @@ def search_openlibrary(query):
 
     return None
 
+def dynamic_book_crop(image):
+    # 1. convert to greyscale and blur to remove background static
+    grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(grey, (5, 5), 0)
+
+    # 2. canny edge detection
+    edged = cv2.Canny(blur, 50, 150)
+
+    # 3. find shapes these edges make
+    contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours:
+        return image 
+
+    # 4. sort the shapes by size, largest to smallest
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+    # look at the biggest shape
+    largest_contour = contours[0]
+    
+    # get the strict bounding box (x, y, width, height) of that shape
+    x, y, w, h = cv2.boundingRect(largest_contour)
+
+    img_area = image.shape[0] * image.shape[1]
+    if (w * h) > (0.15 * img_area):
+        return image[y:y+h, x:x+w]
+
+    img_h, img_w = image.shape[:2]
+    return image[int(img_h*0.15):int(img_h*0.95), int(img_w*0.2):int(img_w*0.8)]
+
 app = FastAPI()
 
 @app.post('/scan')
@@ -75,17 +116,34 @@ async def scan_books(file: UploadFile):
 
     h, w = image.shape[:2]
 
-    # crop
-    cropped_image = image[int(h*0.50):int(h*0.9), int(w*0.1):int(w*0.9)]
+    cropped_image = image[int(h*0.15):int(h*0.95), int(w*0.2):int(w*0.8)]
 
-    results = reader.readtext(cropped_image, detail=0)
+    upscaled = cv2.resize(cropped_image, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+
+    results = reader.readtext(upscaled)
     
-    # join the list into a single string
-    text = ' '.join(results)
-    print('OCR Raw:', text)
+    results.sort(key=lambda item: item[0][0][1])
+
+    large_text_blocks = []
+    
+    img_height = upscaled.shape[0]
+    
+    threshold = img_height * 0.03  # 3% of image height instead of fixed 50px
+
+    for (bbox, text, prob) in results:
+        text_height = bbox[3][1] - bbox[0][1]
+        if text_height > threshold and prob > 0.3:  # also add confidence filter
+            large_text_blocks.append(text)
+    
+    if not large_text_blocks:
+        large_text_blocks = [text for (_, text, prob) in results if prob > 0.3]
+            
+    text = ' '.join(large_text_blocks)
+    print('Filtered OCR Text:', text)
 
     cleaned_text = clean_ocr_text(text)
-    query = extract_keywords(cleaned_text)
+    corrected_text = correct_ocr_text(cleaned_text)
+    query = extract_keywords(corrected_text)
     print('Search Query:', query)
 
     book = search_openlibrary(query)
